@@ -2,7 +2,7 @@
 
 LuCI status page for Airoha AN7581 SoC on OpenWrt. Covers CPU frequency control, NPU monitoring, and PPE flow offload.
 
-![SoC Status](screenshots/soc-status.png)
+![SoC Status](screenshots/soc-status.png?v=2)
 
 ## Features
 
@@ -13,16 +13,17 @@ LuCI status page for Airoha AN7581 SoC on OpenWrt. Covers CPU frequency control,
 - Direct PLL overclock up to 1600 MHz via devmem (bypasses cpufreq)
 - Overclock detection -- bar turns orange with (OC) label when running above OPP max
 
-### NPU
+### NPU & Wireless Offload
 - Firmware version (TLB format)
 - NPU load status and device binding
 - Clock speed and core count (8 RISC-V cores)
 - Reserved memory regions with sizes
+- Token pool health indicator (Healthy/Warning/Critical)
+- Per-band WiFi cards (2.4/5/6 GHz) with NPU vs DMA path badge, client count, retry rate, and health status
+- PPE flow bound/total counts
 
-### PPE Flow Offload
+### PPE Flow Offload Entries
 - Real-time PPE flow entries table (state, type, original/new flow, ethernet)
-- Per-flow packet and byte counters
-- Bound/unbound flow summary
 
 ## Installation
 
@@ -50,6 +51,7 @@ ssh root@router "chmod +x /usr/libexec/rpcd/luci.airoha_npu && /etc/init.d/rpcd 
 
 - OpenWrt with LuCI on Airoha AN7581
 - PPE debugfs enabled (`/sys/kernel/debug/ppe/entries`)
+- mt76 token_info debugfs for wireless offload monitoring (`/sys/kernel/debug/ieee80211/phy0/mt76/token_info`)
 - `devmem` for overclock feature
 
 ## Notes

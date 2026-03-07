@@ -14,6 +14,11 @@ var callPpeEntries = rpc.declare({
 	method: 'getPpeEntries'
 });
 
+var callTokenInfo = rpc.declare({
+	object: 'luci.airoha_npu',
+	method: 'getTokenInfo'
+});
+
 var callSetGovernor = rpc.declare({
 	object: 'luci.airoha_npu',
 	method: 'setGovernor',
@@ -32,20 +37,11 @@ var callSetOverclock = rpc.declare({
 	params: ['freq_mhz']
 });
 
-function formatBytes(bytes) {
-	if (bytes === 0) return '0 B';
-	var k = 1024;
-	var sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-	var i = Math.floor(Math.log(bytes) / Math.log(k));
-	return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-function formatPackets(packets) {
-	if (packets === 0) return '0';
-	if (packets >= 1000000) return (packets / 1000000).toFixed(2) + 'M';
-	if (packets >= 1000) return (packets / 1000).toFixed(2) + 'K';
-	return packets.toString();
-}
+var bandInfo = [
+	{ name: '2.4 GHz', accent: '#ff9800' },
+	{ name: '5 GHz', accent: '#2196f3' },
+	{ name: '6 GHz', accent: '#9c27b0' }
+];
 
 function formatFreqMHz(khz) {
 	if (!khz || khz === 0) return 'N/A';
@@ -66,6 +62,176 @@ function calcTotalMemory(memRegions) {
 		}
 	});
 	return totalMemory >= 1024 ? (totalMemory / 1024).toFixed(0) + ' MiB' : totalMemory + ' KiB';
+}
+
+function tokenHealth(count, size) {
+	if (size === 0) return { text: 'N/A', color: '#888' };
+	var pct = count / size * 100;
+	if (pct < 50) return { text: 'Healthy', color: '#4caf50' };
+	if (pct < 80) return { text: 'Warning', color: '#ff9800' };
+	return { text: 'Critical', color: '#f44336' };
+}
+
+function getBandStats(tokenInfo, band) {
+	var counts = Array.isArray(tokenInfo.station_counts) ? tokenInfo.station_counts : [];
+	for (var i = 0; i < counts.length; i++) {
+		if (counts[i].band === band) return counts[i];
+	}
+	return { band: band, count: 0, tx_packets: 0, tx_retries: 0, tx_failed: 0 };
+}
+
+function getTxQueue(tokenInfo, band) {
+	var queues = Array.isArray(tokenInfo.tx_queues) ? tokenInfo.tx_queues : [];
+	for (var i = 0; i < queues.length; i++) {
+		if (queues[i].band === band) return queues[i];
+	}
+	return null;
+}
+
+function bandHealth(stats) {
+	if (!stats || stats.count === 0) return { text: 'No clients', color: '#888' };
+	if (stats.tx_packets === 0) return { text: 'Idle', color: '#888' };
+	// retry rate = retries / (packets + retries) (fraction of air frames that are retransmits)
+	var retryRate = stats.tx_retries / (stats.tx_packets + stats.tx_retries);
+	if (retryRate > 0.5) return { text: 'Poor', color: '#f44336' };
+	if (retryRate > 0.2) return { text: 'Fair', color: '#ff9800' };
+	return { text: 'Good', color: '#4caf50' };
+}
+
+function retryRatePct(stats) {
+	if (!stats || stats.tx_packets === 0) return '-';
+	var rate = stats.tx_retries / (stats.tx_packets + stats.tx_retries) * 100;
+	return rate.toFixed(1) + '%';
+}
+
+function renderBandCard(band, txQueue, stats) {
+	var info = bandInfo[band] || { name: 'Band ' + band, accent: '#888' };
+	var id = 'band-' + band;
+	var type = txQueue ? txQueue.type : 'unknown';
+	var health = bandHealth(stats);
+
+	var pathBadge;
+	if (type === 'npu') {
+		pathBadge = E('span', { 'style': 'background:#1565c0;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600' }, 'NPU');
+	} else if (type === 'dma') {
+		pathBadge = E('span', { 'style': 'background:#555;color:#ccc;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600' }, 'DMA');
+	} else {
+		pathBadge = E('span', { 'style': 'background:#333;color:#888;padding:2px 8px;border-radius:4px;font-size:11px' }, '?');
+	}
+
+	var statsRows = [];
+	if (stats && stats.count > 0 && stats.tx_packets > 0) {
+		var retryPct = retryRatePct(stats);
+		var rr = stats.tx_retries / (stats.tx_packets + stats.tx_retries);
+		var retryColor = rr > 0.5 ? '#f44336' : rr > 0.2 ? '#ff9800' : '#aaa';
+		statsRows = [
+			E('div', { 'style': 'display:flex;justify-content:space-between;font-size:12px;color:#aaa;margin-top:2px' }, [
+				E('span', {}, 'Retries'),
+				E('span', { 'id': id + '-retries', 'style': 'color:' + retryColor }, retryPct)
+			])
+		];
+	}
+
+	return E('div', {
+		'id': id,
+		'style': 'background:#1e1e1e;border-radius:8px;padding:16px;border:1px solid #333;border-left:3px solid ' + info.accent
+	}, [
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px' }, [
+			E('span', { 'style': 'font-size:16px;font-weight:bold;color:#fff' }, info.name),
+			pathBadge
+		]),
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
+			E('div', { 'id': id + '-health', 'style': 'display:flex;align-items:center;gap:6px' }, [
+				E('span', { 'style': 'width:8px;height:8px;border-radius:50%;background:' + health.color + ';display:inline-block' }),
+				E('span', { 'style': 'color:' + health.color + ';font-size:13px;font-weight:500' }, health.text)
+			]),
+			E('span', { 'id': id + '-clients', 'style': 'color:#aaa;font-size:13px' },
+				stats.count + ' client' + (stats.count !== 1 ? 's' : ''))
+		])
+	].concat(statsRows));
+}
+
+function updateBandCard(band, stats) {
+	var id = 'band-' + band;
+	var health = bandHealth(stats);
+
+	var healthEl = document.getElementById(id + '-health');
+	if (healthEl) {
+		healthEl.innerHTML = '';
+		healthEl.appendChild(E('span', { 'style': 'width:8px;height:8px;border-radius:50%;background:' + health.color + ';display:inline-block' }));
+		healthEl.appendChild(E('span', { 'style': 'color:' + health.color + ';font-size:13px;font-weight:500' }, health.text));
+	}
+
+	var clientsEl = document.getElementById(id + '-clients');
+	if (clientsEl) {
+		clientsEl.textContent = stats.count + ' client' + (stats.count !== 1 ? 's' : '');
+	}
+
+	var retriesEl = document.getElementById(id + '-retries');
+	if (retriesEl) {
+		var retryPct = retryRatePct(stats);
+		retriesEl.textContent = retryPct;
+		var rr = stats.tx_packets > 0 ? stats.tx_retries / (stats.tx_packets + stats.tx_retries) : 0;
+		retriesEl.style.color = rr > 0.5 ? '#f44336' : rr > 0.2 ? '#ff9800' : '#aaa';
+	}
+}
+
+function freqBarState(hwFreq, minFreq, maxFreq, pllFreqMhz, governor) {
+	// Only trust PLL register reading when governor is "performance" (PLL is stable).
+	// During dynamic scaling (ondemand/schedutil), devmem reads race with PLL transitions
+	// and produce garbage values (e.g. 1800-1900 MHz).
+	var isOverclocked = governor === 'performance' && pllFreqMhz > 0 && (pllFreqMhz * 1000) > maxFreq;
+	var displayMax = isOverclocked ? pllFreqMhz * 1000 : maxFreq;
+	var displayFreq = isOverclocked ? pllFreqMhz * 1000 : Math.min(hwFreq, maxFreq);
+	return { displayFreq: displayFreq, displayMax: displayMax, isOverclocked: isOverclocked };
+}
+
+function renderFreqBar(hwFreq, minFreq, maxFreq, pllFreqMhz, governor) {
+	if (!maxFreq || maxFreq === 0) return E('span', {}, 'N/A');
+
+	var s = freqBarState(hwFreq, minFreq, maxFreq, pllFreqMhz, governor);
+	var pct = Math.round(((s.displayFreq - minFreq) / (s.displayMax - minFreq)) * 100);
+	if (pct < 0) pct = 0;
+	if (pct > 100) pct = 100;
+
+	var bColor = s.isOverclocked
+		? 'linear-gradient(90deg,#e65100,#ff9800)'
+		: 'linear-gradient(90deg,#2e7d32,#66bb6a)';
+	var freqLabel = s.isOverclocked ? (pllFreqMhz + ' MHz (OC)') : formatFreqMHz(s.displayFreq);
+
+	return E('div', { 'id': 'cpu-freq-bar-wrap', 'style': 'display:flex;align-items:center;gap:10px' }, [
+		E('span', { 'style': 'color:#aaa;font-size:90%' }, formatFreqMHz(minFreq)),
+		E('div', { 'style': 'flex:1;background:#333;border-radius:4px;height:22px;position:relative;min-width:180px;max-width:350px' }, [
+			E('div', { 'id': 'cpu-freq-fill', 'style': 'background:' + bColor + ';height:100%;border-radius:4px;width:' + pct + '%;transition:width 0.5s ease' }),
+			E('span', { 'id': 'cpu-freq-text', 'style': 'position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.6)' },
+				freqLabel),
+		]),
+		E('span', { 'id': 'cpu-freq-max-label', 'style': 'color:#aaa;font-size:90%' }, formatFreqMHz(s.displayMax))
+	]);
+}
+
+function updateFreqBar(hwFreq, minFreq, maxFreq, pllFreqMhz, governor) {
+	var textEl = document.getElementById('cpu-freq-text');
+	var fillEl = document.getElementById('cpu-freq-fill');
+	var maxLabel = document.getElementById('cpu-freq-max-label');
+
+	var s = freqBarState(hwFreq, minFreq, maxFreq, pllFreqMhz, governor);
+
+	if (textEl) {
+		textEl.textContent = s.isOverclocked ? (pllFreqMhz + ' MHz (OC)') : formatFreqMHz(s.displayFreq);
+	}
+	if (fillEl && s.displayMax > 0) {
+		var pct = Math.round(((s.displayFreq - minFreq) / (s.displayMax - minFreq)) * 100);
+		if (pct < 0) pct = 0;
+		if (pct > 100) pct = 100;
+		fillEl.style.width = pct + '%';
+		fillEl.style.background = s.isOverclocked
+			? 'linear-gradient(90deg,#e65100,#ff9800)'
+			: 'linear-gradient(90deg,#2e7d32,#66bb6a)';
+	}
+	if (maxLabel) {
+		maxLabel.textContent = formatFreqMHz(s.displayMax);
+	}
 }
 
 function renderGovernorSelect(availGovs, activeGov) {
@@ -124,71 +290,6 @@ function renderMaxFreqSelect(availFreqs, currentMax) {
 	}));
 
 	return select;
-}
-
-function renderFreqBar(hwFreq, minFreq, maxFreq, pllFreqMhz) {
-	if (!maxFreq || maxFreq === 0) return E('span', {}, 'N/A');
-
-	var displayMax = maxFreq;
-	var displayFreq = hwFreq;
-
-	// If overclocked beyond OPP table, adjust the bar range
-	if (pllFreqMhz > 0 && (pllFreqMhz * 1000) > maxFreq) {
-		displayMax = pllFreqMhz * 1000;
-		displayFreq = pllFreqMhz * 1000;
-	}
-
-	var pct = Math.round(((displayFreq - minFreq) / (displayMax - minFreq)) * 100);
-	if (pct < 0) pct = 0;
-	if (pct > 100) pct = 100;
-
-	var isOverclocked = pllFreqMhz > 0 && (pllFreqMhz * 1000) > maxFreq;
-	var barColor = isOverclocked
-		? 'linear-gradient(90deg,#e65100,#ff9800)'
-		: 'linear-gradient(90deg,#2e7d32,#66bb6a)';
-
-	var freqLabel = isOverclocked ? (pllFreqMhz + ' MHz (OC)') : formatFreqMHz(hwFreq);
-
-	return E('div', { 'id': 'cpu-freq-bar-wrap', 'style': 'display:flex;align-items:center;gap:10px' }, [
-		E('span', { 'style': 'color:#aaa;font-size:90%' }, formatFreqMHz(minFreq)),
-		E('div', { 'style': 'flex:1;background:#333;border-radius:4px;height:22px;position:relative;min-width:180px;max-width:350px' }, [
-			E('div', { 'id': 'cpu-freq-fill', 'style': 'background:' + barColor + ';height:100%;border-radius:4px;width:' + pct + '%;transition:width 0.5s ease' }),
-			E('span', { 'id': 'cpu-freq-text', 'style': 'position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.6)' },
-				freqLabel),
-		]),
-		E('span', { 'id': 'cpu-freq-max-label', 'style': 'color:#aaa;font-size:90%' }, formatFreqMHz(displayMax))
-	]);
-}
-
-function updateFreqBar(hwFreq, minFreq, maxFreq, pllFreqMhz) {
-	var textEl = document.getElementById('cpu-freq-text');
-	var fillEl = document.getElementById('cpu-freq-fill');
-	var maxLabel = document.getElementById('cpu-freq-max-label');
-
-	var displayMax = maxFreq;
-	var displayFreq = hwFreq;
-	var isOverclocked = pllFreqMhz > 0 && (pllFreqMhz * 1000) > maxFreq;
-
-	if (isOverclocked) {
-		displayMax = pllFreqMhz * 1000;
-		displayFreq = pllFreqMhz * 1000;
-	}
-
-	if (textEl) {
-		textEl.textContent = isOverclocked ? (pllFreqMhz + ' MHz (OC)') : formatFreqMHz(hwFreq);
-	}
-	if (fillEl && displayMax > 0) {
-		var pct = Math.round(((displayFreq - minFreq) / (displayMax - minFreq)) * 100);
-		if (pct < 0) pct = 0;
-		if (pct > 100) pct = 100;
-		fillEl.style.width = pct + '%';
-		fillEl.style.background = isOverclocked
-			? 'linear-gradient(90deg,#e65100,#ff9800)'
-			: 'linear-gradient(90deg,#2e7d32,#66bb6a)';
-	}
-	if (maxLabel) {
-		maxLabel.textContent = formatFreqMHz(displayMax);
-	}
 }
 
 function renderOverclockControls() {
@@ -258,9 +359,7 @@ function renderPpeRows(entries) {
 			E('td', { 'class': 'td' }, entry.type),
 			E('td', { 'class': 'td' }, entry.orig || '-'),
 			E('td', { 'class': 'td' }, entry.new_flow || '-'),
-			E('td', { 'class': 'td' }, ethDisplay),
-			E('td', { 'class': 'td' }, formatPackets(entry.packets || 0)),
-			E('td', { 'class': 'td' }, formatBytes(entry.bytes || 0))
+			E('td', { 'class': 'td' }, ethDisplay)
 		]);
 	});
 }
@@ -269,16 +368,25 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			callNpuStatus(),
-			callPpeEntries()
+			callPpeEntries(),
+			callTokenInfo()
 		]);
 	},
 
 	render: function(data) {
 		var status = data[0] || {};
 		var ppeData = data[1] || {};
+		var tokenInfo = data[2] || {};
 		var entries = Array.isArray(ppeData.entries) ? ppeData.entries : [];
 		var memRegions = Array.isArray(status.memory_regions) ? status.memory_regions : [];
 		var totalMemoryStr = calcTotalMemory(memRegions);
+		var tpHealth = tokenHealth(tokenInfo.token_count || 0, tokenInfo.token_size || 1);
+
+		// Build band cards
+		var bandCards = [];
+		for (var b = 0; b < 3; b++) {
+			bandCards.push(renderBandCard(b, getTxQueue(tokenInfo, b), getBandStats(tokenInfo, b)));
+		}
 
 		var viewEl = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('Airoha SoC Status')),
@@ -290,7 +398,7 @@ return view.extend({
 					E('tr', { 'class': 'tr' }, [
 						E('td', { 'class': 'td', 'width': '33%' }, E('strong', {}, _('Current Frequency'))),
 						E('td', { 'class': 'td' },
-							renderFreqBar(status.cpu_hw_freq, status.cpu_min_freq, status.cpu_max_freq, status.pll_freq_mhz))
+							renderFreqBar(status.cpu_hw_freq, status.cpu_min_freq, status.cpu_max_freq, status.pll_freq_mhz, status.cpu_governor))
 					]),
 					E('tr', { 'class': 'tr' }, [
 						E('td', { 'class': 'td' }, E('strong', {}, _('Governor'))),
@@ -313,43 +421,51 @@ return view.extend({
 				])
 			]),
 
-			// NPU Information Section
+			// NPU & Wireless Offload Section
 			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, _('NPU Information')),
+				E('h3', {}, _('NPU & Wireless Offload')),
 				E('table', { 'class': 'table' }, [
 					E('tr', { 'class': 'tr' }, [
-						E('td', { 'class': 'td', 'width': '33%' }, E('strong', {}, _('NPU Firmware Version'))),
-						E('td', { 'class': 'td', 'id': 'npu-version' }, status.npu_version || _('Not available'))
-					]),
-					E('tr', { 'class': 'tr' }, [
-						E('td', { 'class': 'td' }, E('strong', {}, _('NPU Status'))),
+						E('td', { 'class': 'td', 'width': '33%' }, E('strong', {}, _('NPU Status'))),
 						E('td', { 'class': 'td', 'id': 'npu-status' }, status.npu_loaded ?
 							E('span', { 'class': 'label-success' }, _('Active') + (status.npu_device ? ' (' + status.npu_device + ')' : '')) :
 							E('span', { 'class': 'label-danger' }, _('Not Active')))
 					]),
 					E('tr', { 'class': 'tr' }, [
-						E('td', { 'class': 'td' }, E('strong', {}, _('NPU Clock / Cores'))),
-						E('td', { 'class': 'td', 'id': 'npu-clock' }, (status.npu_clock ? (status.npu_clock / 1000000).toFixed(0) + ' MHz' : 'N/A') + ' / ' + (status.npu_cores || 0) + ' cores')
+						E('td', { 'class': 'td' }, E('strong', {}, _('Firmware / Clock / Cores'))),
+						E('td', { 'class': 'td', 'id': 'npu-info' },
+							(status.npu_version || 'N/A') + '  |  ' +
+							(status.npu_clock ? (status.npu_clock / 1000000).toFixed(0) + ' MHz' : 'N/A') + '  |  ' +
+							(status.npu_cores || 0) + ' cores')
 					]),
 					E('tr', { 'class': 'tr' }, [
 						E('td', { 'class': 'td' }, E('strong', {}, _('Reserved Memory'))),
 						E('td', { 'class': 'td', 'id': 'npu-memory' }, totalMemoryStr + ' (' + memRegions.length + ' regions)')
 					]),
 					E('tr', { 'class': 'tr' }, [
-						E('td', { 'class': 'td' }, E('strong', {}, _('Offload Statistics'))),
-						E('td', { 'class': 'td', 'id': 'npu-offload' }, formatPackets(status.offload_packets || 0) + ' packets / ' + formatBytes(status.offload_bytes || 0))
+						E('td', { 'class': 'td' }, E('strong', {}, _('Token Pool'))),
+						E('td', { 'class': 'td' },
+							E('div', { 'style': 'display:flex;align-items:center;gap:8px' }, [
+								E('span', { 'id': 'token-dot', 'style': 'width:8px;height:8px;border-radius:50%;background:' + tpHealth.color + ';display:inline-block' }),
+								E('span', { 'id': 'token-label', 'style': 'color:' + tpHealth.color + ';font-weight:500' }, tpHealth.text),
+								E('span', { 'id': 'token-count', 'style': 'color:#888;margin-left:4px' },
+									(tokenInfo.token_count || 0) + ' / ' + (tokenInfo.token_size || 0) + ' in-flight')
+							]))
+					]),
+					E('tr', { 'class': 'tr' }, [
+						E('td', { 'class': 'td' }, E('strong', {}, _('PPE Flows'))),
+						E('td', { 'class': 'td', 'id': 'npu-offload' },
+							(status.offload_bound || 0) + ' bound / ' + (status.offload_total || 0) + ' total')
 					])
-				])
+				]),
+
+				// Band cards grid
+				E('div', { 'style': 'display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:8px;padding:0 4px' }, bandCards)
 			]),
 
 			// PPE Flow Offload Section
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, _('PPE Flow Offload Entries')),
-				E('div', { 'class': 'cbi-section-descr', 'id': 'ppe-summary' },
-					_('Total: ') + entries.length + ' | ' +
-					_('Bound: ') + entries.filter(function(e) { return e.state === 'BND'; }).length + ' | ' +
-					_('Unbound: ') + entries.filter(function(e) { return e.state === 'UNB'; }).length
-				),
 				E('table', { 'class': 'table', 'id': 'ppe-entries-table' }, [
 					E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 						E('th', { 'class': 'th' }, _('Index')),
@@ -357,26 +473,25 @@ return view.extend({
 						E('th', { 'class': 'th' }, _('Type')),
 						E('th', { 'class': 'th' }, _('Original Flow')),
 						E('th', { 'class': 'th' }, _('New Flow')),
-						E('th', { 'class': 'th' }, _('Ethernet')),
-						E('th', { 'class': 'th' }, _('Packets')),
-						E('th', { 'class': 'th' }, _('Bytes'))
+						E('th', { 'class': 'th' }, _('Ethernet'))
 					])
 				].concat(renderPpeRows(entries)))
 			])
 		]);
 
-		// Setup polling for live updates (5 second interval)
 		poll.add(L.bind(function() {
 			return Promise.all([
 				callNpuStatus(),
-				callPpeEntries()
+				callPpeEntries(),
+				callTokenInfo()
 			]).then(L.bind(function(data) {
 				var status = data[0] || {};
 				var ppeData = data[1] || {};
+				var tokenInfo = data[2] || {};
 				var entries = Array.isArray(ppeData.entries) ? ppeData.entries : [];
 
 				// Update CPU frequency bar
-				updateFreqBar(status.cpu_hw_freq, status.cpu_min_freq, status.cpu_max_freq, status.pll_freq_mhz);
+				updateFreqBar(status.cpu_hw_freq, status.cpu_min_freq, status.cpu_max_freq, status.pll_freq_mhz, status.cpu_governor);
 
 				// Update governor select
 				var govSelect = document.getElementById('cpu-governor-select');
@@ -390,35 +505,39 @@ return view.extend({
 					freqSelect.value = (status.cpu_max_freq || 0).toString();
 				}
 
-				// Update NPU offload stats
-				var offloadEl = document.getElementById('npu-offload');
-				if (offloadEl) {
-					offloadEl.textContent = formatPackets(status.offload_packets || 0) + ' packets / ' + formatBytes(status.offload_bytes || 0);
-				}
-
-				// Update NPU status
+				// Update NPU status badge
 				var statusEl = document.getElementById('npu-status');
 				if (statusEl) {
 					statusEl.innerHTML = '';
-					if (status.npu_loaded) {
-						var span = document.createElement('span');
-						span.className = 'label-success';
-						span.textContent = _('Active') + (status.npu_device ? ' (' + status.npu_device + ')' : '');
-						statusEl.appendChild(span);
-					} else {
-						var span = document.createElement('span');
-						span.className = 'label-danger';
-						span.textContent = _('Not Active');
-						statusEl.appendChild(span);
-					}
+					var span = document.createElement('span');
+					span.className = status.npu_loaded ? 'label-success' : 'label-danger';
+					span.textContent = status.npu_loaded
+						? (_('Active') + (status.npu_device ? ' (' + status.npu_device + ')' : ''))
+						: _('Not Active');
+					statusEl.appendChild(span);
 				}
 
-				// Update PPE summary
-				var summaryEl = document.getElementById('ppe-summary');
-				if (summaryEl) {
-					summaryEl.textContent = _('Total: ') + entries.length + ' | ' +
-						_('Bound: ') + entries.filter(function(e) { return e.state === 'BND'; }).length + ' | ' +
-						_('Unbound: ') + entries.filter(function(e) { return e.state === 'UNB'; }).length;
+				// Update token pool health
+				var tpHealth = tokenHealth(tokenInfo.token_count || 0, tokenInfo.token_size || 1);
+				var tokenDot = document.getElementById('token-dot');
+				var tokenLabel = document.getElementById('token-label');
+				var tokenCount = document.getElementById('token-count');
+				if (tokenDot) tokenDot.style.background = tpHealth.color;
+				if (tokenLabel) {
+					tokenLabel.textContent = tpHealth.text;
+					tokenLabel.style.color = tpHealth.color;
+				}
+				if (tokenCount) tokenCount.textContent = (tokenInfo.token_count || 0) + ' / ' + (tokenInfo.token_size || 0) + ' in-flight';
+
+				// Update PPE flows
+				var offloadEl = document.getElementById('npu-offload');
+				if (offloadEl) {
+					offloadEl.textContent = (status.offload_bound || 0) + ' bound / ' + (status.offload_total || 0) + ' total';
+				}
+
+				// Update band cards
+				for (var b = 0; b < 3; b++) {
+					updateBandCard(b, getBandStats(tokenInfo, b));
 				}
 
 				// Update PPE table
