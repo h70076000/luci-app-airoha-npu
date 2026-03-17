@@ -6,7 +6,7 @@ Real-time monitoring and management dashboard for the Airoha AN7581 SoC on OpenW
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![OpenWrt](https://img.shields.io/badge/OpenWrt-24.10%2B-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-1.0.0-orange.svg)
+![Version](https://img.shields.io/badge/version-1.0.1-orange.svg)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/rchen14b)
 
 ## Screenshots
@@ -140,6 +140,14 @@ luci-app-airoha-npu/
 | `setOverclock` | Direct PLL frequency set | `freq_mhz` |
 
 ## Version History
+
+### v1.0.1
+- Unified Frame Engine diagram with architectural layout matching AN7581 data paths
+- WiFi band cards moved into CDM4/WDMA section (reflects actual WiFi DMA path)
+- Added NPU and PPE Engine cards with live status and flow counts
+- Token pool and PPE flows removed from summary table (now in Frame Engine view)
+- Fixed GDM4 register addresses (0x2500, not 0x3500)
+- Improved compact WiFi band chip styling
 
 ### v1.0.0
 - CPU frequency management with governor and overclock controls

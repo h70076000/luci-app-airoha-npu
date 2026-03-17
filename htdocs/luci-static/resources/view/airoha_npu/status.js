@@ -129,69 +129,57 @@ function retryPct(s) {
 	return (s.tx_retries/(s.tx_packets+s.tx_retries)*100).toFixed(1)+'%';
 }
 
-/* ── Band Card ── */
-function renderBandCard(band, txQ, stats) {
+/* ── Mini Band Chip (compact for FE diagram) ── */
+function renderBandChip(band, txQ, stats) {
 	var info = bandInfo[band] || { name: 'Band '+band, accent: '#888' };
 	var id = 'band-'+band;
-	var type = txQ ? txQ.type : '?';
 	var h = bandHealth(stats);
+	var type = txQ ? txQ.type : '?';
 	var rp = retryPct(stats);
 
-	var badge = E('span', { 'style': 'background:' + (type==='npu'?'#1565c0':'#666') + ';color:#fff;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:600;letter-spacing:.5px' }, type.toUpperCase());
-
-	return E('div', { 'id': id, 'class': 'soc-card soc-card-accent', 'style': 'border-left-color:'+info.accent }, [
-		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
-			E('span', { 'class': 'soc-text', 'style': 'font-size:15px;font-weight:bold' }, info.name),
-			badge
+	return E('div', { 'id': id, 'style': 'background:var(--soc-card-bg);border:1px solid var(--soc-border);border-left:2px solid '+info.accent+';border-radius:6px;padding:10px 12px' }, [
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px' }, [
+			E('span', { 'class': 'soc-text', 'style': 'font-size:13px;font-weight:bold' }, info.name),
+			E('span', { 'style': 'background:'+(type==='npu'?'#1565c0':'#666')+';color:#fff;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600' }, type.toUpperCase())
 		]),
-		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center' }, [
-			E('div', { 'id': id+'-health', 'style': 'display:flex;align-items:center;gap:5px' }, [
-				E('span', { 'style': 'width:8px;height:8px;border-radius:50%;background:'+h.color+';display:inline-block' }),
-				E('span', { 'style': 'color:'+h.color+';font-size:13px;font-weight:500' }, h.text)
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;font-size:12px' }, [
+			E('div', { 'id': id+'-health', 'style': 'display:flex;align-items:center;gap:4px' }, [
+				E('span', { 'style': 'width:7px;height:7px;border-radius:50%;background:'+h.color+';display:inline-block' }),
+				E('span', { 'style': 'color:'+h.color+';font-weight:500' }, h.text)
 			]),
-			E('span', { 'id': id+'-clients', 'class': 'soc-muted', 'style': 'font-size:13px' },
-				stats.count + ' client' + (stats.count!==1?'s':''))
-		]),
-		(stats.count > 0 && stats.tx_packets > 0) ?
-			E('div', { 'style': 'display:flex;justify-content:space-between;font-size:12px;margin-top:6px' }, [
-				E('span', { 'class': 'soc-muted' }, 'Retries'),
-				E('span', { 'id': id+'-retries', 'style': 'color:'+(parseFloat(rp)>50?'#f44336':parseFloat(rp)>20?'#ff9800':'inherit') }, rp)
-			]) : E('span')
+			E('span', { 'id': id+'-clients', 'class': 'soc-muted' }, stats.count + ' sta'),
+			(stats.tx_packets > 0) ? E('span', { 'id': id+'-retries', 'class': 'soc-muted' }, rp) : E('span')
+		])
 	]);
 }
 
-function updateBandCard(band, stats) {
+function updateBandChip(band, stats) {
 	var id = 'band-'+band, h = bandHealth(stats);
 	var el = document.getElementById(id+'-health');
-	if (el) { el.innerHTML = ''; el.appendChild(E('span',{'style':'width:8px;height:8px;border-radius:50%;background:'+h.color+';display:inline-block'})); el.appendChild(E('span',{'style':'color:'+h.color+';font-size:13px;font-weight:500'},h.text)); }
+	if (el) { el.innerHTML = ''; el.appendChild(E('span',{'style':'width:6px;height:6px;border-radius:50%;background:'+h.color+';display:inline-block'})); el.appendChild(E('span',{'style':'color:'+h.color+';font-weight:500;font-size:11px'},h.text)); }
 	var cl = document.getElementById(id+'-clients');
-	if (cl) cl.textContent = stats.count+' client'+(stats.count!==1?'s':'');
+	if (cl) cl.textContent = stats.count+'sta';
 	var re = document.getElementById(id+'-retries');
-	if (re) { var rp2 = retryPct(stats); re.textContent = rp2; re.style.color = parseFloat(rp2)>50?'#f44336':parseFloat(rp2)>20?'#ff9800':'inherit'; }
+	if (re) { var rp2 = retryPct(stats); re.textContent = rp2; }
 }
 
-/* ── Frame Engine Diagram ── */
-function renderFeDiagram(fe) {
+/* ── Frame Engine Diagram (with WiFi bands, NPU, PPE flows) ── */
+function renderFeDiagram(fe, ti, st) {
 	if (!fe || fe.error) return E('div', { 'class': 'soc-muted' }, 'devmem not available on this build');
+	ti = ti || {}; st = st || {};
 
 	var ports = Array.isArray(fe.pse_ports) ? fe.pse_ports : [];
 
-	// GDM cards
-	var gdms = [
-		{ key:'gdm1', name:'GDM1', label:'Internal Switch (1G LAN3/4)', color:'#ff9800', pse:'P1' },
-		{ key:'gdm2', name:'GDM2', label:'WAN (USXGMII 10G)', color:'#4caf50', pse:'P2' },
-		{ key:'gdm4', name:'GDM4', label:'LAN2 (USXGMII 10G)', color:'#4caf50', pse:'P9' }
-	];
-
-	var gdmCards = gdms.map(function(g) {
-		var d = fe[g.key] || {};
+	// Helper: GDM card
+	function gdmCard(key, name, label, color, pse) {
+		var d = fe[key] || {};
 		var active = d.tx > 0 || d.rx > 0;
-		return E('div', { 'class': 'soc-card soc-card-accent', 'style': 'border-left-color:'+g.color + (active?';border-color:'+g.color:'') }, [
+		return E('div', { 'class': 'soc-card soc-card-accent', 'style': 'border-left-color:'+color + (active?';border-color:'+color:'') }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
-				E('span', { 'style': 'font-weight:bold;color:'+g.color+';font-size:14px' }, g.name),
-				E('span', { 'class': 'soc-label' }, g.pse)
+				E('span', { 'style': 'font-weight:bold;color:'+color+';font-size:14px' }, name),
+				E('span', { 'class': 'soc-label' }, pse)
 			]),
-			E('div', { 'class': 'soc-label', 'style': 'margin-bottom:8px' }, g.label),
+			E('div', { 'class': 'soc-label', 'style': 'margin-bottom:6px' }, label),
 			E('div', { 'style': 'display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px' }, [
 				E('span', { 'class': 'soc-muted' }, 'TX'), E('span', { 'class': 'soc-text', 'style': 'text-align:right' }, fmtK(d.tx)),
 				E('span', { 'class': 'soc-muted' }, 'RX'), E('span', { 'class': 'soc-text', 'style': 'text-align:right' }, fmtK(d.rx))
@@ -201,23 +189,18 @@ function renderFeDiagram(fe) {
 				E('span', { 'style': 'color:#f44336' }, 'RX Drop'), E('span', { 'style': 'color:#f44336;text-align:right' }, fmtK(d.rx_drop))
 			] : []))
 		]);
-	});
+	}
 
-	// CDM offload bars
-	var cdms = [
-		{ key:'cdm1', name:'CDM1', label:'CPU DMA Path 1', pse:'P0' },
-		{ key:'cdm2', name:'CDM2', label:'CPU DMA Path 2', pse:'P5' }
-	];
-
-	var cdmCards = cdms.map(function(c) {
-		var d = fe[c.key] || {};
+	// Helper: CDM offload bar
+	function cdmCard(key, name, label, pse) {
+		var d = fe[key] || {};
 		var total = (d.rx_cpu||0) + (d.rx_hwf||0);
 		var pct = total > 0 ? ((d.rx_hwf/total)*100).toFixed(1) : '0.0';
 		var barCol = total===0 ? 'var(--soc-border)' : parseFloat(pct)>80 ? '#4caf50' : parseFloat(pct)>50 ? '#ff9800' : '#f44336';
 		return E('div', { 'class': 'soc-card' }, [
 			E('div', { 'style': 'display:flex;justify-content:space-between;margin-bottom:4px' }, [
-				E('span', { 'style': 'font-weight:bold;color:#607d8b;font-size:13px' }, c.name+' '+c.pse),
-				E('span', { 'class': 'soc-label' }, c.label)
+				E('span', { 'style': 'font-weight:bold;color:#607d8b;font-size:13px' }, name+' '+pse),
+				E('span', { 'class': 'soc-label' }, label)
 			]),
 			E('div', { 'class': 'soc-text', 'style': 'font-size:12px;margin-bottom:4px' }, 'HW Offload: '+pct+'%'),
 			E('div', { 'class': 'soc-bar-track', 'style': 'height:6px' }, [
@@ -229,15 +212,67 @@ function renderFeDiagram(fe) {
 				E('span', { 'class': 'soc-muted' }, 'TX: '+fmtK(d.tx||0))
 			])
 		]);
-	});
+	}
+
+	// WiFi band chips for CDM4
+	var bandChips = [];
+	for (var b = 0; b < 3; b++) bandChips.push(renderBandChip(b, getTxQueue(ti, b), getBandStats(ti, b)));
+
+	// CDM4/WDMA + WiFi bands grouped
+	var p7 = ports[7] || { iq: 0, oq: 0, drops: 0 };
+	var cdm4WiFi = E('div', { 'class': 'soc-card soc-card-accent', 'style': 'border-left-color:#9c27b0' }, [
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px' }, [
+			E('span', { 'style': 'font-weight:bold;color:#9c27b0;font-size:14px' }, 'CDM4 / WDMA'),
+			E('span', { 'class': 'soc-label' }, 'P7 WiFi DMA')
+		]),
+		E('div', { 'style': 'display:flex;gap:12px;font-size:11px;margin-bottom:8px' }, [
+			E('span', { 'class': 'soc-muted' }, 'IQ '+p7.iq),
+			E('span', { 'class': 'soc-muted' }, 'OQ '+p7.oq),
+			p7.drops > 0 ? E('span', { 'style': 'color:#f44336' }, 'Drop '+fmtK(p7.drops)) : null
+		].filter(Boolean)),
+		// WiFi bands inside
+		E('div', { 'style': 'display:grid;grid-template-columns:repeat(3,1fr);gap:6px' }, bandChips)
+	]);
+
+	// NPU indicator
+	var npuActive = st.npu_loaded;
+	var npuCard = E('div', { 'class': 'soc-card', 'style': 'border-color:'+(npuActive?'#00bcd4':'var(--soc-border)') }, [
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px' }, [
+			E('span', { 'style': 'font-weight:bold;color:#00bcd4;font-size:14px' }, 'NPU'),
+			E('span', { 'style': 'background:'+(npuActive?'#00695c':'#666')+';color:#fff;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:600' }, npuActive ? 'ACTIVE' : 'OFF')
+		]),
+		E('div', { 'class': 'soc-label', 'style': 'margin-bottom:4px' }, '8x RISC-V via PCIe RAM'),
+		E('div', { 'style': 'font-size:11px' }, [
+			E('span', { 'class': 'soc-muted' }, 'Manages: '),
+			E('span', { 'class': 'soc-text', 'style': 'font-size:11px' }, 'PPE init, WDMA rings, flow stats')
+		])
+	]);
+
+	// PPE engines with flow count
+	var ppeCard = E('div', { 'class': 'soc-card', 'style': 'border-color:#2196f3' }, [
+		E('div', { 'style': 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px' }, [
+			E('span', { 'style': 'font-weight:bold;color:#2196f3;font-size:14px' }, 'PPE Engines'),
+			E('span', { 'class': 'soc-label' }, 'P4 + P8')
+		]),
+		E('div', { 'style': 'display:flex;gap:16px;font-size:12px' }, [
+			E('span', {}, [
+				E('span', { 'class': 'soc-muted' }, 'Bound '),
+				E('span', { 'class': 'soc-text', 'style': 'font-weight:bold', 'id': 'fe-ppe-bound' }, (st.offload_bound||0).toString())
+			]),
+			E('span', {}, [
+				E('span', { 'class': 'soc-muted' }, 'Total '),
+				E('span', { 'class': 'soc-text', 'id': 'fe-ppe-total' }, (st.offload_total||0).toString())
+			])
+		])
+	]);
 
 	// PSE buffer
 	var pseT = (fe.pse_used||0)+(fe.pse_free||0);
 	var pseP = pseT>0 ? ((fe.pse_used/pseT)*100).toFixed(1) : '0';
 	var pseCol = parseFloat(pseP)>80?'#f44336':parseFloat(pseP)>50?'#ff9800':'#4caf50';
 
-	// PSE port cells
-	var portCells = ports.map(function(p) {
+	// PSE port cells (skip P7 since it's shown in CDM4/WiFi section)
+	var portCells = ports.filter(function(p){ return p.port !== 7; }).map(function(p) {
 		var info = psePortMap[p.port] || { name:'P'+p.port, label:'?', color:'#666' };
 		var drop = p.drops > 0;
 		return E('div', { 'class': 'soc-pse-cell', 'style': drop ? 'border-color:#f44336' : '' }, [
@@ -261,11 +296,24 @@ function renderFeDiagram(fe) {
 				E('div', { 'style': 'background:'+pseCol+';height:100%;width:'+pseP+'%;border-radius:4px;transition:width .5s' })
 			])
 		]),
-		// GDM row
-		E('div', { 'class': 'soc-gdm-grid' }, gdmCards),
-		// CDM row
-		E('div', { 'class': 'soc-cdm-grid' }, cdmCards),
-		// PSE ports
+		// Row 1: GDM ports
+		E('div', { 'class': 'soc-gdm-grid' }, [
+			gdmCard('gdm1', 'GDM1', 'Internal Switch (1G LAN3/4)', '#ff9800', 'P1'),
+			gdmCard('gdm2', 'GDM2', 'WAN (USXGMII 10G)', '#4caf50', 'P2'),
+			gdmCard('gdm4', 'GDM4', 'LAN2 (USXGMII 10G)', '#4caf50', 'P9')
+		]),
+		// Row 2: CDM1/CDM2 (CPU) + CDM4/WiFi
+		E('div', { 'style': 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px' }, [
+			cdmCard('cdm1', 'CDM1', 'CPU DMA 1', 'P0'),
+			cdmCard('cdm2', 'CDM2', 'CPU DMA 2', 'P5'),
+			cdm4WiFi
+		]),
+		// Row 3: PPE + NPU
+		E('div', { 'style': 'display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px' }, [
+			ppeCard,
+			npuCard
+		]),
+		// PSE port grid
 		E('div', { 'class': 'soc-text', 'style': 'font-size:12px;font-weight:600;margin-bottom:6px' }, 'PSE Port Queue Status'),
 		E('div', { 'class': 'soc-pse-grid' }, portCells)
 	]);
@@ -361,10 +409,6 @@ return view.extend({
 		var st = data[0]||{}, ppe = data[1]||{}, ti = data[2]||{}, fe = data[3]||{};
 		var entries = Array.isArray(ppe.entries) ? ppe.entries : [];
 		var memR = Array.isArray(st.memory_regions) ? st.memory_regions : [];
-		var tph = tokenHealth(ti.token_count||0, ti.token_size||1);
-
-		var bandCards = [];
-		for (var b=0;b<3;b++) bandCards.push(renderBandCard(b, getTxQueue(ti,b), getBandStats(ti,b)));
 
 		var view = E('div',{'class':'cbi-map'},[
 			E('h2',{},_('Airoha SoC Status')),
@@ -381,7 +425,7 @@ return view.extend({
 				])
 			]),
 
-			// NPU, Wireless & Frame Engine (merged)
+			// NPU & Frame Engine (unified)
 			E('div',{'class':'cbi-section'},[
 				E('h3',{},_('NPU & Offload Engine')),
 				E('table',{'class':'table'},[
@@ -392,23 +436,12 @@ return view.extend({
 					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('Firmware / Clock / Cores'))),
 						E('td',{'class':'td','id':'npu-info'}, (st.npu_version||'N/A')+' | '+(st.npu_clock?(st.npu_clock/1e6).toFixed(0)+' MHz':'N/A')+' | '+(st.npu_cores||0)+' cores') ]),
 					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('Reserved Memory'))),
-						E('td',{'class':'td','id':'npu-memory'}, calcTotalMem(memR)+' ('+memR.length+' regions)') ]),
-					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('Token Pool'))),
-						E('td',{'class':'td'}, E('div',{'style':'display:flex;align-items:center;gap:8px'},[
-							E('span',{'id':'token-dot','style':'width:8px;height:8px;border-radius:50%;background:'+tph.color+';display:inline-block'}),
-							E('span',{'id':'token-label','style':'color:'+tph.color+';font-weight:500'},tph.text),
-							E('span',{'id':'token-count','class':'soc-muted','style':'margin-left:4px'},(ti.token_count||0)+' / '+(ti.token_size||0)+' in-flight')
-						])) ]),
-					E('tr',{'class':'tr'},[ E('td',{'class':'td'},E('strong',{},_('PPE Flows'))),
-						E('td',{'class':'td','id':'npu-offload'}, (st.offload_bound||0)+' bound / '+(st.offload_total||0)+' total') ])
+						E('td',{'class':'td','id':'npu-memory'}, calcTotalMem(memR)+' ('+memR.length+' regions)') ])
 				]),
 
-				// WiFi band cards
-				E('div',{'class':'soc-band-grid','style':'margin-top:10px'}, bandCards),
-
-				// Frame Engine inline
-				E('div',{'style':'margin-top:16px'},[ E('h4',{'class':'soc-text','style':'font-size:14px;margin-bottom:8px'},_('Frame Engine'))]),
-				E('div',{'id':'fe-container'}, renderFeDiagram(fe))
+				// Frame Engine diagram (includes WiFi bands, PPE flows, NPU indicator)
+				E('div',{'style':'margin-top:12px'},[ E('h4',{'class':'soc-text','style':'font-size:14px;margin-bottom:8px'},_('Frame Engine'))]),
+				E('div',{'id':'fe-container'}, renderFeDiagram(fe, ti, st))
 			]),
 
 			// PPE Flow Table
@@ -436,15 +469,7 @@ return view.extend({
 				var se=document.getElementById('npu-status');
 				if(se){se.innerHTML='';var sp=document.createElement('span');sp.className=st.npu_loaded?'label-success':'label-danger';sp.textContent=st.npu_loaded?(_('Active')+(st.npu_device?' ('+st.npu_device+')':'')):_('Not Active');se.appendChild(sp);}
 
-				var tph=tokenHealth(ti.token_count||0,ti.token_size||1);
-				var td2=document.getElementById('token-dot'); if(td2) td2.style.background=tph.color;
-				var tl=document.getElementById('token-label'); if(tl){tl.textContent=tph.text;tl.style.color=tph.color;}
-				var tc=document.getElementById('token-count'); if(tc) tc.textContent=(ti.token_count||0)+' / '+(ti.token_size||0)+' in-flight';
-				var oe=document.getElementById('npu-offload'); if(oe) oe.textContent=(st.offload_bound||0)+' bound / '+(st.offload_total||0)+' total';
-
-				for(var b=0;b<3;b++) updateBandCard(b, getBandStats(ti,b));
-
-				var fc=document.getElementById('fe-container'); if(fc){fc.innerHTML='';fc.appendChild(renderFeDiagram(fe));}
+				var fc=document.getElementById('fe-container'); if(fc){fc.innerHTML='';fc.appendChild(renderFeDiagram(fe, ti, st));}
 
 				var tb=document.getElementById('ppe-entries-table');
 				if(tb){while(tb.rows.length>1)tb.deleteRow(1);renderPpeRows(entries).forEach(function(r){tb.appendChild(r);});}
