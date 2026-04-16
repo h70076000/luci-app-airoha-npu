@@ -72,7 +72,7 @@ jobs:
       - name: Create i18n uci-defaults file
         run: |
           mkdir -p luci-app-airoha-npu/root/etc/uci-defaults
-          cat > luci-app-easytier/root/etc/uci-defaults/luci-i18n-airoha-npu-zh-cn << 'EOF'
+          cat > luci-app-airoha-npu/root/etc/uci-defaults/luci-i18n-airoha-npu-zh-cn << 'EOF'
           #!/bin/sh
           uci -q batch << EOI
           set luci.languages.zh_cn='简体中文 (Simplified Chinese)'
