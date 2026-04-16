@@ -15,7 +15,7 @@ jobs:
           tar -xJf /opt/sdk.tar.xz -C /opt
           git clone https://github.com/h70076000/luci-app-airoha-npu.git /opt/alist
           cd /opt/openwrt-sdk*/package
-          cp -R /opt/alist/luci-app-airoha-npu.
+          cp -R /opt/alist/luci-app-airoha-npu .
           cd /opt/openwrt-sdk*
           ./scripts/feeds update -a
           make defconfig
